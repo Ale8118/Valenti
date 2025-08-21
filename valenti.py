@@ -17,6 +17,10 @@ GRAVITY = 1.2
 PLAYER_JUMP_SPEED = -22
 DOUBLE_JUMP_SPEED = -18
 
+# Aggiunto per la bandiera
+FLAG_POWERUP_DURATION = 20 # secondi
+FLAG_SPEED_BOOST = 4
+
 # Colori
 BACKGROUND_COLOR = (135, 206, 235)
 WHITE = (255, 255, 255)
@@ -27,12 +31,19 @@ GOLDENROD = (218, 165, 32)
 GREEN = (0, 255, 0)
 BROWN = (139, 69, 19)
 DARK_GREY = (50, 50, 50)
+ROAD_GREY = (100, 100, 100)
+
+# Colori per la bandiera italiana
+ITALY_GREEN = (0, 140, 69)
+ITALY_WHITE = (244, 245, 240)
+ITALY_RED = (205, 33, 42)
 
 # Punteggi
 SCORE_COIN = 5
 SCORE_SIGN = 7
 SCORE_ENEMY = 10
 SCORE_BEER = 2
+SCORE_FLAG = 50 # Punteggio per la bandiera
 
 # --- Funzioni di supporto ---
 def get_asset_path(filename):
@@ -78,9 +89,14 @@ class Player(pygame.sprite.Sprite):
         self.animation_speed = 100
         self.double_jump_enabled = False
         self.has_double_jumped = False
+        
+        # Nuove variabili per l'effetto della bandiera
+        self.is_flag_invincible = False
+        self.flag_powerup_timer = 0
+        self.original_speed = PLAYER_MOVEMENT_SPEED
 
     def update(self, platforms):
-        # Gestione invincibilità
+        # Gestione invincibilità da mostri
         if self.is_invincible:
             self.invincibility_timer -= 1
             if self.invincibility_timer <= 0:
@@ -91,6 +107,20 @@ class Player(pygame.sprite.Sprite):
             else:
                 self.image.set_alpha(255)
 
+        # Gestione invincibilità dalla bandiera
+        if self.is_flag_invincible:
+            self.flag_powerup_timer -= 1
+            if self.flag_powerup_timer <= 0:
+                self.is_flag_invincible = False
+                self.is_invincible = False
+                self.change_x = self.original_speed * self.facing_direction_sign()
+                self.image.set_alpha(255)
+            # Effetto visivo di trasparenza
+            elif self.flag_powerup_timer % 5 < 3:
+                self.image.set_alpha(180)
+            else:
+                self.image.set_alpha(255)
+        
         # Animazione
         now = pygame.time.get_ticks()
         if now - self.last_frame_update > self.animation_speed:
@@ -142,6 +172,9 @@ class Player(pygame.sprite.Sprite):
         # Reimposta la variabile per il doppio salto quando il giocatore tocca terra
         if self.on_ground:
             self.has_double_jumped = False
+            
+    def facing_direction_sign(self):
+        return 1 if self.facing_direction == "right" else -1
 
     def jump(self):
         # Esegue un salto normale solo se il giocatore è a terra
@@ -197,6 +230,32 @@ class Collectible(pygame.sprite.Sprite):
         self.rect = self.image.get_rect(center=(x, y))
         self.value = value
         self.type = type
+
+class ItalianFlag(pygame.sprite.Sprite):
+    def __init__(self, x, y):
+        super().__init__()
+        flag_width, flag_height = 45, 60
+        pole_width, pole_height = 5, 80
+        
+        self.image = pygame.Surface((flag_width + pole_width, pole_height), pygame.SRCALPHA)
+        self.rect = self.image.get_rect(topleft=(x, y))
+
+        # Disegna il palo
+        pole_rect = pygame.Rect(0, 0, pole_width, pole_height)
+        pole_rect.bottom = pole_height
+        pygame.draw.rect(self.image, DARK_GREY, pole_rect)
+        
+        # Disegna la bandiera
+        bandiera_x = pole_width
+        bandiera_y = 0
+        
+        green_rect = pygame.Rect(bandiera_x, bandiera_y, flag_width / 3, flag_height)
+        white_rect = pygame.Rect(bandiera_x + flag_width / 3, bandiera_y, flag_width / 3, flag_height)
+        red_rect = pygame.Rect(bandiera_x + 2 * flag_width / 3, bandiera_y, flag_width / 3, flag_height)
+        
+        pygame.draw.rect(self.image, ITALY_GREEN, green_rect)
+        pygame.draw.rect(self.image, ITALY_WHITE, white_rect)
+        pygame.draw.rect(self.image, ITALY_RED, red_rect)
 
 class Platform(pygame.sprite.Sprite):
     def __init__(self, x, y, width, height, image=None):
@@ -271,6 +330,23 @@ class River(pygame.sprite.Sprite):
 
     def draw(self, screen, camera_offset_x):
         screen.blit(self.image, (self.x_offset - camera_offset_x, self.rect.y))
+
+class Limousine(pygame.sprite.Sprite):
+    def __init__(self, x, y, image):
+        super().__init__()
+        self.image = image
+        self.rect = self.image.get_rect(topleft=(x, y))
+        self.target_x = WINDOW_WIDTH * 0.7
+        self.speed = 4
+        self.arrived = False
+
+    def update(self):
+        if not self.arrived:
+            if self.rect.x < self.target_x:
+                self.rect.x += self.speed
+            else:
+                self.rect.x = self.target_x
+                self.arrived = True
 
 class Backgrounds:
     def __init__(self):
@@ -362,6 +438,15 @@ class Game:
         
         self.current_encouraging_message = ""
 
+        # Messaggi esagerati per l'intro
+        self.intro_messages = [
+            ("LA LEGGENDA È ARRIVATA!", (255, 0, 0)),
+        ]
+        self.message_index = 0
+        self.intro_text_x = WINDOW_WIDTH
+        self.intro_text_speed = 5
+        self.intro_message_duration = 180 # 3 secondi * 60 fps
+
         self.passed_checkpoints = set()
         
         self.backgrounds = Backgrounds()
@@ -376,7 +461,8 @@ class Game:
             'beer': load_image("beer.png", scale_factor=COLLECTIBLE_SCALE),
             'tile_terreno': load_image("tile_terreno.png"),
             'enemy': load_image("mo.png"),
-            'title': load_image("valenti.png", scale_factor=0.3)
+            'title': load_image("valenti.png", scale_factor=0.3),
+            'limousine': load_image("limousine.png", scale_factor=0.2) # Aggiungo la limousine
         }
 
         # Aggiungo vale1 e vale2 come primo frame per l'animazione di corsa
@@ -388,7 +474,7 @@ class Game:
             if isinstance(self.textures[key], list):
                 self.textures[key] = [pygame.transform.scale(img, (int(img.get_width() * CHARACTER_SCALE), int(img.get_height() * CHARACTER_SCALE))) for img in self.textures[key]]
             else:
-                if key not in ['tile_terreno', 'coin', 'beer', 'enemy', 'title']:
+                if key not in ['tile_terreno', 'coin', 'beer', 'enemy', 'title', 'limousine']:
                     self.textures[key] = pygame.transform.scale(self.textures[key], (int(self.textures[key].get_width() * CHARACTER_SCALE), int(self.textures[key].get_height() * CHARACTER_SCALE)))
         
         # Carica l'immagine del fiume
@@ -403,6 +489,8 @@ class Game:
             self.pick_sound = pygame.mixer.Sound(get_asset_path("pick.ogg"))
             self.hit_sound = pygame.mixer.Sound(get_asset_path("hit.ogg"))
             self.collision_sound = pygame.mixer.Sound(get_asset_path("collision.ogg"))
+            self.powerup_sound = pygame.mixer.Sound(get_asset_path("powerup.ogg")) # Suono per la bandiera
+
             
             # Imposta i volumi iniziali
             pygame.mixer.music.set_volume(self.music_volume)
@@ -411,26 +499,25 @@ class Game:
             self.pick_sound.set_volume(self.sfx_volume)
             self.hit_sound.set_volume(self.sfx_volume)
             self.collision_sound.set_volume(self.sfx_volume)
+            self.powerup_sound.set_volume(self.sfx_volume)
             
             pygame.mixer.music.play(-1)
         except pygame.error as e:
             print(f"ERRORE: Impossibile caricare o riprodurre i file audio. Assicurati che siano nella cartella 'assets' e che siano in un formato compatibile (es. Ogg Vorbis). Dettagli errore: {e}")
 
-
-        # Mappa del livello estesa
         self.level_map = [
             "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  ",
-            "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  ",
-            "          P                               C                 P                 C         E                   S                                       E      B                  P                                         P                                                                    P                                                                                                                                                                                                   ",
+            "                                                                                                                                      FE                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            ",
+            "          P                               C                 P                 C         E                   S                  PP    PPPP              E      B                  P                                         P                                                                    P                                                                                                                                                                                                   ",
             "        C   P     P                           S                 C   P     P E   P                             P   P                             P   P      P     P      P           P                     P                                                                                                                                                                                                                                 ",
-            "      P   P     E               P   E     P   E P   B               P E P   p   S           P E P   P   P P P     P   P     P   P       P P P     P     P         P     P   P     P       P                   P                                                                                                                                                                                                                         ",
+            "      P   P     E               P   E     P   E P   B               P E P   p   S           P E P   P   P P P     P   P     P   P       P   P     P     P         P     P   P     P       P                   P                                                                                                                                                                                                                         ",
             "    E       S   E E         P   E   P P   E           S               P   P     P   P   P S     P     P   P     P       P   B       P P   E   P P   P E       PES       P E   E       P P   P   E P P   E       P   S ",
             "    P   P E C     E   P E   P C     P E P C     P E P P C     P E P P S                         S                                   P     P     P     P                                                                                                                                                                                 ",
             "    P P P P E   P P   E         P       P E P     P P         P E P P C P P   E P         P E P S         P P E   P   B       P P   E   P P   P E       PES       P E   E         P P   P   E P P   E       P   S ",
             "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPDDDDDPPPPPPPPPDDPDDDPPPPPPPPDDDPPPPPPPPDDDPPPPPPPPPPPPPPPPPP",
         ]
 
-        # Posiziono la porta finale nell'ultima colonna della mappa
+        # Posiziono la porta finale e la bandiera in punti strategici della mappa
         self.level_map[6] += "D"
         for i in range(len(self.level_map)):
             if len(self.level_map[i]) < len(self.level_map[6]):
@@ -442,33 +529,57 @@ class Game:
 
         self.backgrounds.level_width = self.level_width
         
-        # Inizializzo i gruppi di sprite qui!
         self.all_sprites = pygame.sprite.Group()
         self.platforms = pygame.sprite.Group()
         self.enemies = pygame.sprite.Group()
         self.collectibles = pygame.sprite.Group()
+        self.flags = pygame.sprite.Group()
         self.signs = pygame.sprite.Group()
         self.end_door = pygame.sprite.GroupSingle()
+        
+        self.intro_state = "limo_intro"
+        
+        self.road_y = WINDOW_HEIGHT - 100
+        self.road_height = 100
+        
+        self.limousine = Limousine(-500, self.road_y - self.textures['limousine'].get_height() + 45, self.textures['limousine'])
+        self.player = Player(self.textures)
+        self.player.rect.midbottom = (self.limousine.rect.right - 80, self.limousine.rect.bottom)
 
-        self.setup()
+        self.camera_offset_x = 0
+        self.game_time = 0.0
+        self.game_over = False
+        self.game_complete = False
+        self.passed_checkpoints = set()
 
     def setup(self):
-        # Pulisco tutti i gruppi di sprite prima di crearne di nuovi
+        """Resets the game state to start a new game after the intro."""
+        self.score = 0
+        self.player_lives = 3
+        self.monsters_killed = 0
+        self.game_over = False
+        self.game_complete = False
+        self.game_time = 0.0
+        self.passed_checkpoints = set()
+        self.camera_offset_x = 0
+        self.intro_state = "ready" # Imposta lo stato su "ready" per saltare l'intro
+        self.load_level() # Carica subito il livello
+
+    def load_level(self):
+        # Questo metodo viene chiamato per caricare il livello principale
         self.all_sprites.empty()
         self.platforms.empty()
         self.enemies.empty()
         self.collectibles.empty()
+        self.flags.empty()
         self.signs.empty()
         self.end_door.empty()
         
         self.river = River(self.level_height + 40, self.river_image, self.level_width)
-        
-        self.player = Player(self.textures)
-        # Reimposta l'abilità del doppio salto all'inizio di ogni partita
         self.player.double_jump_enabled = False
         
         tile_size = 64
-        end_door_object = None # Variabile per memorizzare l'oggetto della porta
+        end_door_object = None 
         
         for row_index, row in enumerate(self.level_map):
             for col_index, char in enumerate(row):
@@ -487,30 +598,26 @@ class Game:
                     beer = Collectible(x + tile_size/2, y + tile_size/2, self.textures['beer'], SCORE_BEER, 'beer')
                     self.collectibles.add(beer)
                 elif char == 'S':
-                    # Uso la lista estesa per i cartelli
                     sign = Sign(x + tile_size/2, y + tile_size/2, random.choice(self.sign_messages))
                     self.signs.add(sign)
                 elif char == 'D':
-                    # Crea la porta finale
-                    end_door_image = pygame.Surface([200, 250]) # AUMENTO LE DIMENSIONI DELLA PORTA
+                    end_door_image = pygame.Surface([200, 250]) 
                     end_door_image.fill(BROWN)
-                    end_door_object = Platform(x, y - 190, 200, 250, image=end_door_image) # AUMENTO LE DIMENSIONI PER MANTENERE LA PROPORZIONE
+                    end_door_object = Platform(x, y - 190, 200, 250, image=end_door_image)
+                elif char == 'F':
+                    flag = ItalianFlag(x, y - 60) # Posiziona la bandiera sopra il platform
+                    self.flags.add(flag)
 
-        # Aggiungo gli sprite ai gruppi
-        self.all_sprites.add(self.platforms, self.enemies, self.collectibles, self.signs, self.player)
+        self.all_sprites.add(self.platforms, self.enemies, self.collectibles, self.flags, self.signs, self.player)
         
-        # Aggiungo la porta finale ai due gruppi di sprite
         if end_door_object:
             self.all_sprites.add(end_door_object)
             self.end_door.add(end_door_object)
         
-        self.player.rect.topleft = (128, 128)
-        self.camera_offset_x = 0
-        self.game_time = 0.0
-        self.game_over = False
-        self.game_complete = False
-        self.passed_checkpoints = set()
-
+        # Posiziona il giocatore sul livello principale
+        first_platform_y = self.platforms.sprites()[0].rect.top
+        self.player.rect.midbottom = (100, first_platform_y)
+    
     def calculate_final_score(self):
         """Calcola il punteggio finale combinando punti e tempo."""
         time_penalty = int(self.game_time * 100)
@@ -550,7 +657,6 @@ class Game:
         while running:
             delta_time = self.clock.tick(FPS) / 1000.0
             
-            # Controllo continuo del mouse e dello stato del gioco
             mouse_x, mouse_y = pygame.mouse.get_pos()
             mouse_pressed = pygame.mouse.get_pressed()[0]
             
@@ -568,17 +674,17 @@ class Game:
                     
                     if not self.paused and (self.game_over or self.game_complete):
                         if event.key == pygame.K_r:
-                            self.score = 0
-                            self.player_lives = 3
-                            self.monsters_killed = 0
-                            self.game_time = 0.0
                             self.setup()
-                    elif not self.paused:
+                    elif not self.paused and self.intro_state == "ready":
                         if event.key == pygame.K_LEFT or event.key == pygame.K_a:
-                            self.player.change_x = -PLAYER_MOVEMENT_SPEED
+                            self.player.change_x = -self.player.original_speed
+                            if self.player.is_flag_invincible:
+                                self.player.change_x -= FLAG_SPEED_BOOST
                             self.player.facing_direction = "left"
                         elif event.key == pygame.K_RIGHT or event.key == pygame.K_d:
-                            self.player.change_x = PLAYER_MOVEMENT_SPEED
+                            self.player.change_x = self.player.original_speed
+                            if self.player.is_flag_invincible:
+                                self.player.change_x += FLAG_SPEED_BOOST
                             self.player.facing_direction = "right"
                         elif (event.key == pygame.K_UP or event.key == pygame.K_w or event.key == pygame.K_SPACE):
                             if self.player.on_ground:
@@ -591,7 +697,7 @@ class Game:
                                     self.jump_sound.play()
 
                 elif event.type == pygame.KEYUP:
-                    if not self.paused:
+                    if not self.paused and self.intro_state == "ready":
                         if (event.key == pygame.K_LEFT or event.key == pygame.K_a) and self.player.change_x < 0:
                             self.player.change_x = 0
                         elif (event.key == pygame.K_RIGHT or event.key == pygame.K_d) and self.player.change_x > 0:
@@ -616,21 +722,75 @@ class Game:
                     self.pick_sound.set_volume(self.sfx_volume)
                     self.hit_sound.set_volume(self.sfx_volume)
                     self.collision_sound.set_volume(self.sfx_volume)
-
-            if not self.paused and not self.game_over and not self.game_complete:
-                self.game_time += delta_time
-                self.update()
-                self.draw()
-            elif self.paused:
-                self.draw_pause_menu()
-            elif self.game_over:
-                self.draw_end_screen("GAME OVER", CRIMSON, "Premi 'R' per riavviare")
-            elif self.game_complete:
-                self.draw_end_screen("Bravo Valenti sei riuscito anche questa volta!", GREEN, "Premi 'R' per riavviare")
+            
+            if self.intro_state == "limo_intro":
+                self.update_intro_sequence()
+                self.draw_intro_sequence()
+            elif self.intro_state == "ready":
+                if not self.paused and not self.game_over and not self.game_complete:
+                    self.game_time += delta_time
+                    self.update()
+                    self.draw()
+                elif self.paused:
+                    self.draw_pause_menu()
+                elif self.game_over:
+                    self.draw_end_screen("GAME OVER", CRIMSON, "Premi 'R' per riavviare")
+                elif self.game_complete:
+                    self.draw_end_screen("Bravo Valenti sei riuscito anche questa volta!", GREEN, "Premi 'R' per riavviare")
 
             pygame.display.flip()
 
         pygame.quit()
+
+    def update_intro_sequence(self):
+        # La limousine si muove verso la posizione di destinazione
+        self.limousine.update()
+
+        # Una volta che la limousine è arrivata
+        if self.limousine.arrived:
+            self.intro_text_x -= self.intro_text_speed
+            
+            # Se il messaggio è uscito dallo schermo, passa al successivo
+            if self.intro_text_x < -300: # -300 è un valore arbitrario per garantire che il testo sia completamente fuori dallo schermo
+                self.intro_text_x = WINDOW_WIDTH
+                self.message_index += 1
+
+            # Se tutti i messaggi sono stati mostrati, transizione al gioco
+            if self.message_index >= len(self.intro_messages):
+                self.intro_state = "ready"
+                self.load_level()
+            else:
+                # Posiziona Valenti sulla strada, vicino alla limousine
+                self.player.rect.midbottom = (self.limousine.rect.right - 80, self.road_y)
+
+    def draw_intro_sequence(self):
+        self.screen.fill(BACKGROUND_COLOR)
+        
+        # Disegna la strada grigia
+        pygame.draw.rect(self.screen, ROAD_GREY, (0, self.road_y, WINDOW_WIDTH, self.road_height))
+        
+        # Disegna la limousine
+        self.screen.blit(self.limousine.image, self.limousine.rect)
+        
+        # Disegna il giocatore solo quando la limousine è arrivata
+        if self.limousine.arrived:
+            self.screen.blit(self.player.image, self.player.rect)
+
+        # Disegna il messaggio di benvenuto e i messaggi esagerati
+        font_large = pygame.font.Font(None, 80) # Carattere più grande
+        
+        # Messaggio introduttivo fisso
+        text_surf = font_large.render("Preparati, Valenti!", True, GOLDENROD)
+        text_rect = text_surf.get_rect(center=(WINDOW_WIDTH // 2, 50))
+        self.screen.blit(text_surf, text_rect)
+        
+        # Messaggi esagerati a rotazione e scorrevoli
+        if self.limousine.arrived and self.message_index < len(self.intro_messages):
+            message, color = self.intro_messages[self.message_index]
+            font_exaggerated = pygame.font.Font(None, 72)
+            exaggerated_surf = font_exaggerated.render(message, True, color)
+            exaggerated_rect = exaggerated_surf.get_rect(midleft=(self.intro_text_x, WINDOW_HEIGHT // 2))
+            self.screen.blit(exaggerated_surf, exaggerated_rect)
 
     def update(self):
         self.player.update(self.platforms)
@@ -638,6 +798,7 @@ class Game:
         self.river.update()
 
         self.handle_collectibles()
+        self.handle_flags()
         self.handle_signs()
         self.handle_enemies()
         self.handle_end_door()
@@ -676,6 +837,27 @@ class Game:
                 self.message_text = f"Doppio Salto Abilitato! (Punti +{SCORE_BEER})"
                 self.message_timer = FPS * 3
 
+    def handle_flags(self):
+        flags_hit = pygame.sprite.spritecollide(self.player, self.flags, True)
+        for flag in flags_hit:
+            self.powerup_sound.set_volume(self.sfx_volume)
+            self.powerup_sound.play()
+            self.score += SCORE_FLAG
+            
+            self.player.is_invincible = True
+            self.player.is_flag_invincible = True
+            self.player.flag_powerup_timer = FPS * FLAG_POWERUP_DURATION
+            
+            # Aumenta la velocità del giocatore
+            if self.player.change_x > 0:
+                self.player.change_x += FLAG_SPEED_BOOST
+            elif self.player.change_x < 0:
+                self.player.change_x -= FLAG_SPEED_BOOST
+            
+            self.display_message = True
+            self.message_text = "Super Saiyan Valenti Attivato!"
+            self.message_timer = FPS * 3
+
     def handle_signs(self):
         signs_hit = pygame.sprite.spritecollide(self.player, self.signs, True)
         for sign in signs_hit:
@@ -692,6 +874,14 @@ class Game:
         enemies_hit = pygame.sprite.spritecollide(self.player, self.enemies, False, pygame.sprite.collide_mask)
         
         for enemy in enemies_hit:
+            if self.player.is_flag_invincible:
+                enemy.die()
+                self.hit_sound.set_volume(self.sfx_volume)
+                self.hit_sound.play()
+                self.monsters_killed += 1
+                self.score += SCORE_ENEMY
+                continue
+            
             if self.player.change_y > 0 and self.player.rect.bottom <= enemy.rect.centery:
                 if not enemy.is_dying:
                     enemy.die()
@@ -742,7 +932,7 @@ class Game:
             text_rect = text_surf.get_rect(center=(WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2))
             self.screen.blit(text_surf, text_rect)
             
-    def draw_hud(self):
+    def draw_hud(self,):
         font = pygame.font.Font(None, 24)
 
         title_rect = self.textures['title'].get_rect(center=(WINDOW_WIDTH / 2, 50))
@@ -761,12 +951,13 @@ class Game:
         legenda_surf = font.render(legenda_text, True, DARK_GREY)
         self.screen.blit(legenda_surf, (20, 60))
         
-        points_text_template = "Punti: Monete: +{coin_score} | Cartelli: +{sign_score} | Birra: +{beer_score} | Mostri: +{enemy_score}"
+        points_text_template = "Punti: Monete: +{coin_score} | Cartelli: +{sign_score} | Birra: +{beer_score} | Mostri: +{enemy_score} | Bandiera: +{flag_score}"
         points_text = points_text_template.format(
             coin_score=SCORE_COIN,
             sign_score=SCORE_SIGN,
             beer_score=SCORE_BEER,
-            enemy_score=SCORE_ENEMY
+            enemy_score=SCORE_ENEMY,
+            flag_score=SCORE_FLAG
         )
         points_surf = font.render(points_text, True, DARK_GREY)
         self.screen.blit(points_surf, (20, 80))
