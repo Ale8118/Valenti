@@ -40,6 +40,8 @@ Pause: Press P to pause the game and access the volume controls.
 
 ![spv3](https://github.com/user-attachments/assets/0b2ee4cd-14f7-4e15-a0db-043b08cc7869)
 
+<img width="1280" height="739" alt="Schermata 2025-08-22 alle 00 32 12" src="https://github.com/user-attachments/assets/92bb8266-83e4-45c7-919a-f767538b50d3" />
+
 
 How to Run
 Prerequisites
@@ -99,5 +101,6 @@ assets folder: Contains all image (.png) and audio (.ogg) files.
 
 ![spv5](https://github.com/user-attachments/assets/ae14870f-21bd-4835-8a64-02969abcb78f)
 
+![photo_2025-08-20_23-17-57](https://github.com/user-attachments/assets/600ee594-a39c-49d8-8574-77a6e30fc205)
 
 
